@@ -1,0 +1,35 @@
+{
+  "header": {
+    "height": {
+      "value": 0
+    },
+    "parentId": {
+      "value": 0
+    },
+    "txsHash": -778314493,
+    "signature": {
+      "value": "MEQCIBYLb+8GcKKYpqxVJasov3f09UJ9X4J+eIZIiiiezXxuAiBuz0haUAq5XrvDJE2iF9PfIy6vT6zgiFOGmM/d1Mt25w=="
+    }
+  },
+  "body": {
+    "txs": [
+      {
+        "from": {
+          "value": "DEAD_END"
+        },
+        "to": {
+          "value": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETjvWvT4+g2RGoDWcqNp32DJBtet3wO01duOiRNGSygopR+q7JvgQRhC63wG3+peS6mar5DOLVbeMN0EQUuDTTg=="
+        },
+        "nonce": {
+          "value": 0
+        },
+        "amount": {
+          "value": 1000000
+        },
+        "signature": {
+          "value": ""
+        }
+      }
+    ]
+  }
+}

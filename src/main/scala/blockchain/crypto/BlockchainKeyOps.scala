@@ -13,4 +13,7 @@ trait BlockchainKeyOps {
   def verify(public: BlockchainPublicKey, messageBytes: Array[Byte], signedMessageBytes: String): Boolean
   def generate: BlockchainKeyPair
   def isValidPublicKey(public: BlockchainPublicKey): Boolean
+
+  def isValidPrivateKey(public: BlockchainPrivateKey): Boolean
+
 }

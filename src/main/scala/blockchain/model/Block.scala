@@ -2,6 +2,8 @@ package blockchain.model
 
 import blockchain.Genesis.GenesisHeight
 import blockchain.model.Transaction.TransactionId
+import io.circe.Decoder
+import io.circe.generic.semiauto.deriveDecoder
 
 case class BlockId(value: Long) extends AnyVal
 

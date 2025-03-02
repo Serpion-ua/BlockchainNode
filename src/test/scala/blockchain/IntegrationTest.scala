@@ -1,10 +1,12 @@
 package blockchain
 
+import blockchain.ChainGeneratorState.genesisParentId
 import blockchain.Config.AppConfig
-import blockchain.Genesis.{GenesisAmount, GenesisKey1}
+import blockchain.Genesis.GenesisHeight
 import blockchain.ShowInstances._
-import blockchain.crypto.Signable.TransactionSigning
-import blockchain.crypto.{BlockchainKeyOps, BlockchainKeyOpsSHA256WithECDSA}
+import blockchain.crypto.BlockchainKeys.BlockchainKeyPair
+import blockchain.crypto.Signable.{TransactionSigning, UnsignedBlockSigning}
+import blockchain.crypto.{BlockchainKeyOps, BlockchainKeyOpsRSA}
 import blockchain.model.Transaction.CoinAmount
 import blockchain.model._
 import blockchain.server.RestApiPaths
@@ -31,7 +33,6 @@ class IntegrationTest extends CatsEffectSuite {
   type F[A] = IO[A]
   implicit val loggerFactory: LoggerFactory[F]                                  = Slf4jFactory.create[F]
   implicit val logger: Logger[F]                                                = Slf4jLogger.getLoggerFromName[F]("NodeMain")
-  implicit val crypto: BlockchainKeyOps                                         = BlockchainKeyOpsSHA256WithECDSA
   implicit val blockDecoder: EntityDecoder[IO, Block]                           = jsonOf[IO, Block]
   implicit val txDecoder: EntityDecoder[IO, Transaction]                        = jsonOf[IO, Transaction]
   implicit val InvalidTransactionDecoder: EntityDecoder[IO, InvalidTransaction] = jsonOf[IO, InvalidTransaction]
@@ -65,34 +66,43 @@ class IntegrationTest extends CatsEffectSuite {
     } yield block
   }
 
-  //Signing is non-deterministic so we can't use equal
-  private def equalNoSignatureCheck(left: Block, right: Block) = {
-    val headersEquals = left.header.copy(signature = BlockSignature.empty) == right.header.copy(signature = BlockSignature.empty)
-    val bodyEquals    = left.body == right.body
-    headersEquals && bodyEquals
+  implicit val crypto: BlockchainKeyOps = BlockchainKeyOpsRSA
+  private val genesisAmount = CoinAmount(1000000)
+  private val genesisKey = crypto.generate
+  private val createGenesis = {
+    val genesisTx =
+      Transaction(Account.dead.value, genesisKey.publicKey, AccountNonce.initialNonce, genesisAmount, TransactionSignature.empty)
+    val genesisBlockBody: BlockBody = BlockBody(Seq(genesisTx))
+    val genesisUnsignedHeader = UnsignedBlockHeader(GenesisHeight, genesisParentId, genesisBlockBody.txsHash)
+    val genesisHeader = genesisUnsignedHeader.sign(genesisKey.privateKey)
+    Block(genesisHeader, genesisBlockBody)
   }
 
+  private val genesisBlock = createGenesis
+  private val genesisTxPrivateKey = genesisKey.privateKey
+  private val chainState = ChainGeneratorState.fromGenesisBlock(genesisBlock, Seq(genesisTxPrivateKey))
+
+  private val genesisKeyPair = BlockchainKeyPair(genesisTxPrivateKey, genesisBlock.body.txs.head.to)
+
   test("First block as expected") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
-        val keyAndAmount    = Seq((Genesis.GenesisKey1, AccountData.default.copy(amount = Genesis.GenesisAmount)))
-        val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, Genesis.GenesisKey1)
-        val (blocks, _)     = ChainGenerator.generateBlocks(chainState, 2, Genesis.GenesisKey1)
+        val (blocks, _) = ChainGenerator.generateBlocks(chainState, 2, genesisKeyPair)(crypto)
 
         for {
-          block0 <- mintBlock(client, blocks(0))
-          _ = assert(equalNoSignatureCheck(block0, blocks(0)))
+          block0 <- mintBlock(client, blocks.head)
+          _ = println(show"${blocks.head}")
+          _ = println(show"$block0")
+          _ = assert(block0 == blocks.head)
         } yield ()
       }
     }
   }
 
   test("Transaction after 20 blocks is accepted") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
-        val keyAndAmount       = Seq((Genesis.GenesisKey1, AccountData.default.copy(amount = Genesis.GenesisAmount)))
-        val (_, chainState)    = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, Genesis.GenesisKey1)
-        val (blocks, endState) = ChainGenerator.generateBlocks(chainState, 20, Genesis.GenesisKey1)
+        val (blocks, endState) = ChainGenerator.generateBlocks(chainState, 20, genesisKeyPair)(crypto)
         val (tx, _)            = ChainGenerator.generateTransaction(endState)
 
         for {
@@ -105,30 +115,28 @@ class IntegrationTest extends CatsEffectSuite {
   }
 
   test("Try double spend") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
-        val keyAndAmount       = Seq((Genesis.GenesisKey1, AccountData.default.copy(amount = Genesis.GenesisAmount)))
-        val (_, chainState)    = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, Genesis.GenesisKey1)
-        val (blocks, endState) = ChainGenerator.generateBlocks(chainState, 5, Genesis.GenesisKey1)
+        val (blocks, endState) = ChainGenerator.generateBlocks(chainState, 2, genesisKeyPair)(crypto)
         val tx                 = blocks.flatMap(_.body.txs).head
         val txKey              = endState.ledger.keys.filter(_.publicKey == tx.from).head
         for {
           tx1Res <- addTransactionRequest(client)(tx).flatMap(_.as[Transaction])
           _   = assert(tx1Res == tx)
-          tx2 = tx1Res.copy(nonce = tx.nonce.nextNonce, amount = GenesisAmount).sign(txKey.privateKey)
+          tx2 = tx1Res.copy(nonce = tx.nonce.nextNonce, amount = genesisAmount).sign(txKey.privateKey)
           tx2Res <- addTransactionRequest(client)(tx2).flatMap(_.as[InvalidTransaction]).map(_.asInstanceOf[NotEnoughFunds])
-          _ = assert(tx2Res.required == GenesisAmount)
+          _ = assert(tx2Res.required == genesisAmount)
         } yield ()
       }
     }
   }
 
   test("Incorrect nonce") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
         val to = crypto.generate
-        val tx = Transaction(GenesisKey1.publicKey, to.publicKey, AccountNonce(1), CoinAmount(1), TransactionSignature.empty)
-          .sign(GenesisKey1.privateKey)
+        val tx = Transaction(genesisKeyPair.publicKey, to.publicKey, AccountNonce(1), CoinAmount(1), TransactionSignature.empty)
+          .sign(genesisKeyPair.privateKey)
 
         for {
           tx1Res <- addTransactionRequest(client)(tx).flatMap(_.as[Transaction])
@@ -142,11 +150,11 @@ class IntegrationTest extends CatsEffectSuite {
   }
 
   test("Incorrect signature") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
         val to = crypto.generate
-        val tx = Transaction(GenesisKey1.publicKey, to.publicKey, AccountNonce(1), CoinAmount(1), TransactionSignature.empty)
-          .sign(GenesisKey1.privateKey)
+        val tx = Transaction(genesisKeyPair.publicKey, to.publicKey, AccountNonce(1), CoinAmount(1), TransactionSignature.empty)
+          .sign(genesisKeyPair.privateKey)
         val modifiedTx = tx.copy(signature = tx.signature.copy(value = tx.signature.value + "!"))
 
         for {
@@ -162,11 +170,11 @@ class IntegrationTest extends CatsEffectSuite {
   }
 
   test("Negative coin amount") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
         val to = crypto.generate
-        val tx = Transaction(GenesisKey1.publicKey, to.publicKey, AccountNonce(1), CoinAmount(-1), TransactionSignature.empty)
-          .sign(GenesisKey1.privateKey)
+        val tx = Transaction(genesisKeyPair.publicKey, to.publicKey, AccountNonce(1), CoinAmount(-1), TransactionSignature.empty)
+          .sign(genesisKeyPair.privateKey)
 
         for {
           txRes <- addTransactionRequest(client)(tx).flatMap(_.as[InvalidTransaction]).map(_.asInstanceOf[NegativeCoinAmount])
@@ -177,11 +185,11 @@ class IntegrationTest extends CatsEffectSuite {
   }
 
   test("Incorrect from address") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
         val to = crypto.generate
         val tx = Transaction(Account.dead.value, to.publicKey, AccountNonce(1), CoinAmount(1), TransactionSignature.empty)
-          .sign(GenesisKey1.privateKey)
+          .sign(genesisKeyPair.privateKey)
 
         for {
           txRes <- addTransactionRequest(client)(tx).flatMap(_.as[InvalidTransaction]).map(_.asInstanceOf[IncorrectFromAddress])
@@ -192,7 +200,7 @@ class IntegrationTest extends CatsEffectSuite {
   }
 
   test("Unknown from address") {
-    Main.run(List.empty).use { _ =>
+    Main.runNode(config, genesisBlock, genesisTxPrivateKey, crypto).use { _ =>
       EmberClientBuilder.default[F].build.use { client =>
         val to = crypto.generate
         val tx =

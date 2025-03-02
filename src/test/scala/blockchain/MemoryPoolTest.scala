@@ -1,11 +1,9 @@
 package blockchain
 
-import blockchain.model.{AccountData, BlockBody, BlockId, Transaction}
-import blockchain.crypto.BlockchainKeys.BlockchainKeyPair
-import blockchain.model.Transaction.{CoinAmount, TransactionId}
 import blockchain.Generators._
-import blockchain.Genesis.GenesisParentId
+import blockchain.crypto.BlockchainKeys.BlockchainKeyPair
 import blockchain.crypto.{BlockchainKeyOps, BlockchainKeyOpsSHA256WithECDSA}
+import blockchain.model.{AccountData, BlockBody, BlockId}
 import blockchain.state.BlocksTree
 import cats.effect.IO
 import cats.implicits._
@@ -14,7 +12,7 @@ import org.scalacheck.effect.PropF
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class MemoryPoolTest extends CatsEffectSuite with ScalaCheckEffectSuite  {
+class MemoryPoolTest extends CatsEffectSuite with ScalaCheckEffectSuite {
   type F[A] = IO[A]
   implicit val logger: Logger[IO] = Slf4jLogger.getLoggerFromName[IO]("MemoryPoolTest")
   implicit val crypto: BlockchainKeyOps = BlockchainKeyOpsSHA256WithECDSA
@@ -22,16 +20,18 @@ class MemoryPoolTest extends CatsEffectSuite with ScalaCheckEffectSuite  {
   test("Memory pool shall return correct transactions set") {
     PropF.forAllF { params: (BlockId, BlockchainKeyPair, AccountData) =>
       val (genesisId: BlockId, genesisKeys: BlockchainKeyPair, genesisAccountData: AccountData) = params
+
       val keyAndAmount = Seq((genesisKeys, genesisAccountData))
       val (genesisBlock, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, genesisKeys)
       val (blocks, _) = ChainGenerator.generateBlocks(chainState, 5, genesisKeys)
+      val genesisParentId = genesisBlock.header.parentId
       val idToBlockBody = blocks.map(block => block.id -> block.body).toMap
       val blockIds = blocks.map(_.id).toIndexedSeq
       val dataStore = new InMemoryDataStore[F, BlockId, BlockBody](idToBlockBody)
       val allTxs = blocks.flatMap(_.body.txs)
       for {
-        blocksTree <- BlocksTree.make[F](IndexedSeq(GenesisParentId))
-        _ <- blocksTree.parentOf(GenesisParentId, genesisId)
+        blocksTree <- BlocksTree.make[F](IndexedSeq(genesisParentId))
+        _ <- blocksTree.parentOf(genesisParentId, genesisId)
         _ <- blocksTree.parentOf(genesisId, blocks.head.id)
         _ <- blockIds.sliding(2).toSeq.traverse(parentChild => blocksTree.parentOf(parentChild.head, parentChild.last))
         _ <- dataStore.put(genesisId, genesisBlock.body)

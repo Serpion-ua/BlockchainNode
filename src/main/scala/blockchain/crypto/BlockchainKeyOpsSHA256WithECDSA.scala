@@ -51,6 +51,12 @@ object BlockchainKeyOpsSHA256WithECDSA extends BlockchainKeyOps {
       publicFromString(public.value)
     }.isSuccess
 
+  override def isValidPrivateKey(secret: BlockchainPrivateKey): Boolean =
+    Try {
+      secretFromString(secret.value)
+    }.isSuccess
+
+
   private def bytesToString(bytes: Array[Byte]) = Base64.toBase64String(bytes)
   private def stringToBytes(string: String)     = Base64.decode(string)
 

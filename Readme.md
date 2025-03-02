@@ -28,10 +28,12 @@ For testing, a `ChainGenerator` has been implemented to generate consistent bloc
 
 # TODO
 This project has a long list of pending tasks and is not production-ready. Some key improvements include:
-1. The private key is hardcoded in a `.scala` file but should be loaded from a configuration file.
-2. Cryptographic primitives (i.e., the type of keys used for signing and verification) are semi-hardcoded. In many places, they are passed implicitly, while in others (such as in Genesis), they are hardcoded. Instead, they should be dynamically configurable (e.g., for testing purposes).
-3. There is no persistence support, meaning the blockchain always starts from scratch. However, all stateful components support an initial state, so persistence could be easily added.
-4. Multi-node support is currently absent—there is no consensus algorithm or peer-to-peer interaction.
+
+1. There is no persistence support, meaning the blockchain always starts from scratch. However, all stateful components
+   support an initial state, so persistence could be easily added.
+2. Multi-node support is currently absent—there is no consensus algorithm or peer-to-peer interaction.
+3. There is awful mechanism for block packing, it shall be improved
+4. Error handling for incorrect configuration file
 5. ... and more.
 
 ---

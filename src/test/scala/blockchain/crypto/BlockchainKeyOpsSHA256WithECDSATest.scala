@@ -30,4 +30,15 @@ class BlockchainKeyOpsSHA256WithECDSATest extends CatsEffectSuite with ScalaChec
       } yield ()
     }
   }
+
+  test("Checking of incorrect public and private key") {
+    for {
+      pair <- BlockchainKeyOpsSHA256WithECDSA.generate.pure[F]
+      validSecret <- BlockchainKeyOpsSHA256WithECDSA.isValidPrivateKey(pair.privateKey.copy(pair.privateKey.value + ".")).pure[F]
+      _ = assert(!validSecret)
+      validPublic <- BlockchainKeyOpsSHA256WithECDSA.isValidPublicKey(pair.publicKey.copy(pair.privateKey.value + ".")).pure[F]
+      _ = assert(!validPublic)
+    } yield ()
+  }
+
 }

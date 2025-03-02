@@ -1,7 +1,6 @@
 package blockchain.ledger
 
 import blockchain.Generators._
-import blockchain.Genesis.GenesisParentId
 import blockchain.crypto.BlockchainKeys.BlockchainKeyPair
 import blockchain.crypto.{BlockchainKeyOps, BlockchainKeyOpsSHA256WithECDSA}
 import blockchain.model._
@@ -25,6 +24,7 @@ class LedgerTest extends CatsEffectSuite with ScalaCheckEffectSuite {
 
       val keyAndAmount               = Seq((genesisKeys, genesisAccountData))
       val (genesisBlock, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, genesisKeys)
+      val geneBlockParentId = genesisBlock.header.parentId
       val (blocks, _)                = ChainGenerator.generateBlocks(chainState, 5, genesisKeys)
       val idToBlockBody              = blocks.map(block => block.id -> block.body).toMap
       val blockIds                   = blocks.map(_.id).toIndexedSeq
@@ -33,12 +33,12 @@ class LedgerTest extends CatsEffectSuite with ScalaCheckEffectSuite {
       val accountToNonce =
         allTxs.groupMapReduce(_.from)(_ => 1)(_ + _).map { case (k, v) => (Account(k), AccountNonce(v)) }.filter(_._1.isNotDead)
       for {
-        blocksTree <- BlocksTree.make[F](IndexedSeq(GenesisParentId))
-        _          <- blocksTree.parentOf(GenesisParentId, genesisId)
+        blocksTree <- BlocksTree.make[F](IndexedSeq(geneBlockParentId))
+        _ <- blocksTree.parentOf(geneBlockParentId, genesisId)
         _          <- blocksTree.parentOf(genesisId, blocks.head.id)
         _          <- blockIds.sliding(2).toSeq.traverse(parentChild => blocksTree.parentOf(parentChild.head, parentChild.last))
         _          <- dataStore.put(genesisId, genesisBlock.body)
-        ledger     <- Ledger.make(GenesisParentId, LedgerData.empty, blocksTree, dataStore)
+        ledger <- Ledger.make(geneBlockParentId, LedgerData.empty, blocksTree, dataStore)
         ledgerData <- ledger.stateAt(blockIds.last).map(_.accountToData)
         lastBlockchainAmount = ledgerData.map(_._2.amount.value).sum
         genesisValue         = genesisAccountData.amount.value

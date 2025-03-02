@@ -1,20 +1,17 @@
 package blockchain
 
-import blockchain.Generators.KeyGenerator
-import blockchain.Genesis.{GenesisHeight, GenesisParentId}
+import blockchain.Genesis.GenesisHeight
+import blockchain.ShowInstances._
 import blockchain.crypto.BlockchainKeyOps
-import blockchain.crypto.BlockchainKeys.BlockchainKeyPair
+import blockchain.crypto.BlockchainKeys.{BlockchainKeyPair, BlockchainPrivateKey}
 import blockchain.crypto.Signable.{SignableSyntax, TransactionSigning, UnsignedBlockSigning}
 import blockchain.model.Transaction.CoinAmount
 import blockchain.model._
-import blockchain.ShowInstances._
 import cats.implicits._
 import org.scalacheck.Gen
 import org.scalacheck.rng.Seed
 
 import scala.annotation.tailrec
-
-
 
 case class BlocksContext(lastBlockHeader: BlockHeader)
 
@@ -24,7 +21,6 @@ case class ChainGeneratorState(
     generatorSeed: Seed,
     parameters: Gen.Parameters
 )
-
 
 //TODO BlockchainKeyOps.generate accept seed and generate keys based on that seed, to get the same generated data
 object ChainGenerator {
@@ -40,7 +36,7 @@ object ChainGenerator {
       (nonEmptyKeys(rnd.nextPositiveInt % nonEmptyKeysAmount), nonEmptyKeys(rnd.nextPositiveInt % nonEmptyKeysAmount))
     } else {
       //TODO: we shall reuse currently empty Keys as well
-      (nonEmptyKeys(rnd.nextPositiveInt % nonEmptyKeysAmount), KeyGenerator.pureApply(state.parameters, rnd.seed))
+      (nonEmptyKeys(rnd.nextPositiveInt % nonEmptyKeysAmount), crypto.generate)
     }
 
     val fromData                = state.ledger(from)
@@ -113,6 +109,20 @@ object ChainGenerator {
 }
 
 object ChainGeneratorState {
+  val genesisParentId: BlockId = BlockId(0)
+
+  //TODO genesis transactions shall use different addresses
+  def fromGenesisBlock(genesisBlock: Block, privateKeys: Seq[BlockchainPrivateKey], seed: Seed = Seed.random()): ChainGeneratorState = {
+    val ledger = genesisBlock.body.txs.zip(privateKeys).map { case (tx, privateKey) =>
+      val blockchainKeyPair = BlockchainKeyPair(privateKey, tx.to)
+      val accountData = AccountData.default.copy(amount = tx.amount)
+      blockchainKeyPair -> accountData
+    }.toMap
+
+    val blocksContext = BlocksContext(genesisBlock.header)
+    new ChainGeneratorState(ledger, blocksContext, seed, Gen.Parameters.default)
+  }
+
   def fromKeysAndAmounts(data: Seq[(BlockchainKeyPair, AccountData)], nodeKeys: BlockchainKeyPair, seed: Seed = Seed.random())(
       implicit crypto: BlockchainKeyOps
   ): (Block, ChainGeneratorState) = {
@@ -121,7 +131,7 @@ object ChainGeneratorState {
       Transaction(Account.dead.value, keyPair.publicKey, AccountNonce.initialNonce, data.amount, TransactionSignature.empty)
     }
     val genesisBlockBody: BlockBody = BlockBody(genesisTxs)
-    val genesisUnsignedHeader       = UnsignedBlockHeader(GenesisHeight, GenesisParentId, genesisBlockBody.txsHash)
+    val genesisUnsignedHeader = UnsignedBlockHeader(GenesisHeight, genesisParentId, genesisBlockBody.txsHash)
     val genesisHeader               = genesisUnsignedHeader.sign(nodeKeys.privateKey)
     val genesisBlock: Block         = Block(genesisHeader, genesisBlockBody)
 

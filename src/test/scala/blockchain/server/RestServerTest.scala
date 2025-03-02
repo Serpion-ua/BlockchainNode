@@ -3,9 +3,10 @@ package blockchain.server
 import blockchain.Config.AppConfig
 import blockchain.ShowInstances._
 import blockchain.crypto.{BlockchainKeyOps, BlockchainKeyOpsSHA256WithECDSA}
+import blockchain.model.Transaction.CoinAmount
 import blockchain.model.{AccountData, AccountNonce, Block, Transaction}
 import blockchain.validator.{IncorrectNonce, InvalidTransaction}
-import blockchain.{ChainGenerator, ChainGeneratorState, Genesis}
+import blockchain.{ChainGenerator, ChainGeneratorState}
 import cats.effect._
 import cats.implicits._
 import io.circe.generic.auto._
@@ -33,15 +34,18 @@ class RestServerTest extends CatsEffectSuite with ScalaCheckEffectSuite {
   test("POST /transaction should try to add transaction to memory pool with result success") {
     val restHandler = new ServiceLayer[IO] {
       override def addTransaction(tx: Transaction): IO[Either[InvalidTransaction, Transaction]] = IO(Right(tx))
-      override def mintBlock(): IO[Block]                                                         = ???
+
+      override def mintBlock(): IO[Block] = ???
     }
 
     val api    = new RestServer[IO](config.rest, restHandler)
     val client = Client.fromHttpApp(api.routes.orNotFound)
 
-    val keyAndAmount    = Seq((Genesis.GenesisKey1, AccountData.default.copy(amount = Genesis.GenesisAmount)))
-    val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, Genesis.GenesisKey1)
-    val (blocks, _)     = ChainGenerator.generateBlocks(chainState, 5, Genesis.GenesisKey1)
+    val keyPair = crypto.generate
+    val genesisAmount = CoinAmount(1000000)
+    val keyAndAmount = Seq((keyPair, AccountData.default.copy(amount = genesisAmount)))
+    val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, keyPair)
+    val (blocks, _) = ChainGenerator.generateBlocks(chainState, 5, keyPair)
     val tx              = blocks.flatMap(_.body.txs).head
     val requestBody     = tx.asJson
     val path            = s"/${RestApiPaths.addTransaction}"
@@ -56,9 +60,11 @@ class RestServerTest extends CatsEffectSuite with ScalaCheckEffectSuite {
   test("POST /transaction should try to add transaction to memory pool with result failed") {
     implicit val errorEncoder: EntityDecoder[IO, InvalidTransaction] = jsonOf[IO, InvalidTransaction]
 
-    val keyAndAmount    = Seq((Genesis.GenesisKey1, AccountData.default.copy(amount = Genesis.GenesisAmount)))
-    val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, Genesis.GenesisKey1)
-    val (blocks, _)     = ChainGenerator.generateBlocks(chainState, 5, Genesis.GenesisKey1)
+    val keyPair = crypto.generate
+    val genesisAmount = CoinAmount(1000000)
+    val keyAndAmount = Seq((keyPair, AccountData.default.copy(amount = genesisAmount)))
+    val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, keyPair)
+    val (blocks, _) = ChainGenerator.generateBlocks(chainState, 5, keyPair)
     val tx              = blocks.flatMap(_.body.txs).head
 
     val txResponse = IncorrectNonce(tx.id, AccountNonce(0), AccountNonce(1))
@@ -86,14 +92,17 @@ class RestServerTest extends CatsEffectSuite with ScalaCheckEffectSuite {
   test("POST /block should mint block") {
     implicit val blockDecoder: EntityDecoder[IO, Block] = jsonOf[IO, Block]
 
-    val keyAndAmount    = Seq((Genesis.GenesisKey1, AccountData.default.copy(amount = Genesis.GenesisAmount)))
-    val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, Genesis.GenesisKey1)
-    val (blocks, _)     = ChainGenerator.generateBlocks(chainState, 2, Genesis.GenesisKey1)
+    val keyPair = crypto.generate
+    val genesisAmount = CoinAmount(1000000)
+    val keyAndAmount = Seq((keyPair, AccountData.default.copy(amount = genesisAmount)))
+    val (_, chainState) = ChainGeneratorState.fromKeysAndAmounts(keyAndAmount, keyPair)
+    val (blocks, _) = ChainGenerator.generateBlocks(chainState, 2, keyPair)
     val blockToMint     = blocks.head
 
     val restHandler = new ServiceLayer[IO] {
       override def addTransaction(tx: Transaction): IO[Either[InvalidTransaction, Transaction]] = ???
-      override def mintBlock(): IO[Block]                                                         = blockToMint.pure[IO]
+
+      override def mintBlock(): IO[Block] = blockToMint.pure[IO]
     }
 
     val api    = new RestServer[IO](config.rest, restHandler)
